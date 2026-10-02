@@ -140,11 +140,7 @@ def _format_result(action: str, data: dict[str, Any], account: str | None = None
 
     responsedata = data.get("responsedata")
     if responsedata:
-        if isinstance(responsedata, str):
-            try:
-                responsedata = json.loads(responsedata)
-            except json.JSONDecodeError:
-                pass
+        # infoDnsRecords nests its records under a "dnsrecords" key.
         payload["responsedata"] = responsedata
 
     return json.dumps(payload, indent=2, ensure_ascii=False, default=str)

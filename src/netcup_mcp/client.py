@@ -1,17 +1,24 @@
-"""Minimal HTTP client for the netcup CCP domain webservice.
+"""HTTP client for the netcup CCP domain webservice.
 
-The webservice is SOAP, but the same endpoint answers JSON when called
-with ``?JSON``. We use the JSON form so the whole client is a plain HTTP
-POST with no SOAP/XML dependency.
+The webservice is SOAP, but it also accepts JSON when the endpoint is called
+with ``?JSON``. The JSON form is what this client uses, so no XML stack is
+needed.
+
+Two details the endpoint is fussy about, both verified against the live API:
+
+* The payload must be ``{"action": <name>, "param": {...}}``. Credentials sent
+  as a flat object return ``4013 Invalid entry for field apikey`` no matter
+  whether they are correct.
+* ``customernumber`` must be a JSON number, not a string, and
+  ``clientrequestid`` must always be present.
 
 Session handling: every API call except ``login`` needs an
-``apisessionid``. We log in lazily, cache the session id in memory, and
-re-login once on an auth error.
+``apisessionid``. We log in lazily, cache the session id per client, and
+re-login once on a session error.
 """
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
@@ -36,6 +43,25 @@ class NetcupError(RuntimeError):
         self.shortmessage = shortmessage
         self.longmessage = longmessage
         super().__init__(f"{action} failed ({statuscode}): {shortmessage} - {longmessage}")
+
+
+def _as_json_value(value: Any) -> Any:
+    """Coerce a value into what the netcup JSON endpoint expects.
+
+    ``customernumber`` and handle ids are JSON numbers on the wire; sending
+    them as strings makes netcup reject the request.
+    """
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lstrip("-").isdigit():
+            return int(text)
+    if isinstance(value, dict):
+        return {k: _as_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_as_json_value(v) for v in value]
+    return value
 
 
 class NetcupClient:
@@ -81,18 +107,34 @@ class NetcupClient:
         )
 
     def _auth_fields(self) -> dict[str, Any]:
-        return {"customernumber": self.customernumber, "apikey": self.apikey}
+        return {"customernumber": int(self.customernumber), "apikey": self.apikey}
 
-    async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Send one JSON request and return the decoded Responsemessage.
+
+        netcup requires the parameters under a ``param`` key; a flat object is
+        rejected with ``4013 Invalid entry for field apikey`` even when the
+        credentials are correct.
+        """
+        # Drop unset values, always send clientrequestid, and coerce numeric fields.
+        body: dict[str, Any] = {"clientrequestid": ""}
+        for key, value in params.items():
+            if value is not None:
+                body[key] = _as_json_value(value)
+
+        payload = {"action": action, "param": body}
         headers = {
             "Content-Type": "application/json",
-            "SOAPAction": payload.get("action", "login"),
+            "SOAPAction": action,
         }
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=self._timeout)
         response = await self._http.post(self._endpoint, json=payload, headers=headers)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise NetcupError(action, 0, "Malformed API response", str(data)[:200])
+        return data
 
     async def aclose(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -102,17 +144,18 @@ class NetcupClient:
 
     async def login(self) -> str:
         """Open an API session and cache the session id."""
-        payload = {
-            "action": "login",
-            "apipassword": self.apipassword,
-            **self._auth_fields(),
-        }
-        data = await self._post(payload)
+        params = {"apipassword": self.apipassword, **self._auth_fields()}
+        data = await self._post("login", params)
         self._raise_for_status("login", data)
-        session_id = data.get("responsedata") or ""
-        # The session can come back as a bare id or as a serialized SessionObject.
-        if session_id.strip().startswith("{"):
-            session_id = json.loads(session_id).get("apisessionid", "")
+
+        responsedata = data.get("responsedata") or {}
+        if isinstance(responsedata, dict):
+            session_id = str(responsedata.get("apisessionid") or "")
+        else:
+            session_id = str(responsedata)
+        if not session_id:
+            raise NetcupError("login", 0, "No session id in response", str(responsedata))
+
         self._session_id = session_id
         return session_id
 
@@ -135,7 +178,7 @@ class NetcupClient:
             return {
                 "action": "login",
                 "status": "success",
-                "responsedata": await self.login(),
+                "responsedata": {"apisessionid": await self.login()},
             }
 
         if not self._session_id:
@@ -143,13 +186,12 @@ class NetcupClient:
 
         # Drop unset values so the API sees only what the caller supplied.
         supplied = {k: v for k, v in params.items() if v is not None}
-        payload = {
-            "action": action,
+        request_params = {
             "apisessionid": self._session_id,
             **self._auth_fields(),
             **supplied,
         }
-        data = await self._post(payload)
+        data = await self._post(action, request_params)
 
         status = str(data.get("status", "")).lower()
         if status == "error" and _retry and data.get("statuscode") in _AUTH_ERROR_CODES:
@@ -171,19 +213,6 @@ class NetcupClient:
                 str(data.get("shortmessage") or ""),
                 str(data.get("longmessage") or ""),
             )
-
-    @staticmethod
-    def parse_responsedata(data: dict[str, Any]) -> Any:
-        """Decode the ``responsedata`` field, which is a JSON string."""
-        raw = data.get("responsedata")
-        if not raw:
-            return None
-        if not isinstance(raw, str):
-            return raw
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return raw
 
 
 class AccountRegistry:

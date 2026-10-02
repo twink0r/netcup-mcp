@@ -289,11 +289,14 @@ def test_tool_routes_to_the_named_account() -> None:
             default_account="a",
         )
     )
-    sent: list[dict] = []
+    sent: list[tuple[str, dict]] = []
 
-    async def _post(payload: dict) -> dict:
-        sent.append(payload)
-        return {"status": "success", "responsedata": "{}"}
+    async def _post(action: str, params: dict) -> dict:
+        sent.append((action, params))
+        if action == "login":
+            return {"status": "success", "statuscode": 2000,
+                    "responsedata": {"apisessionid": "S"}}
+        return {"status": "success", "statuscode": 2000, "responsedata": {}}
 
     registry.client("a")._post = _post  # type: ignore[method-assign]
     registry.client("b")._post = _post  # type: ignore[method-assign]
@@ -305,8 +308,9 @@ def test_tool_routes_to_the_named_account() -> None:
     asyncio.run(tool.run({"domainname": "y.com", "account": "b"}, context=None))
 
     # Both calls logged in first, so filter those out.
-    calls = [p for p in sent if p.get("action") == "infoDomain"]
-    assert [c["customernumber"] for c in calls] == ["111", "222"]
+    calls = [p for a, p in sent if a == "infoDomain"]
+    # customernumber reaches netcup as a number, so compare numerically.
+    assert [c["customernumber"] for c in calls] == [111, 222]
 
 
 def test_list_accounts_reports_names_and_default() -> None:
@@ -352,7 +356,7 @@ def test_api_error_names_the_account() -> None:
         Config(accounts={"prod": _account("prod", "1")}, default_account="prod")
     )
 
-    async def _post(payload: dict) -> dict:
+    async def _post(action: str, params: dict) -> dict:
         return {"status": "error", "statuscode": 4013, "shortmessage": "Validation Error."}
 
     registry.client("prod")._post = _post  # type: ignore[method-assign]

@@ -5,9 +5,25 @@ It turns the netcup domain API into MCP tools so an agent can list domains,
 inspect and edit DNS zones, and manage contact handles. Multiple netcup
 accounts are supported through a config file.
 
-The API is SOAP, but the same endpoint answers plain JSON when called with
-`?JSON`, so the server needs no XML stack. Two runtime dependencies:
+The API is SOAP, but the same endpoint answers JSON when called with `?JSON`,
+so the server needs no XML stack. Two runtime dependencies:
 [`mcp`](https://pypi.org/project/mcp/) and `httpx`.
+
+### The JSON API is fussy — three things that will bite you
+
+All three were found by testing against the live API, and all three fail in
+confusing ways:
+
+1. **Parameters go under a `param` key.** The payload must be
+   `{"action": "infoDomain", "param": {...}}`. A flat object returns
+   `4013 Invalid entry for field apikey` **even when the credentials are
+   correct** — so a bad password and a wrong request shape look identical.
+2. **`customernumber` must be a JSON number**, not a string, otherwise you get
+   `4005 Customer number in invalid format`.
+3. **`clientrequestid` must always be present**, despite being documented as
+   optional. Without it netcup returns HTTP 500.
+
+The client handles all three; a tool call never has to care.
 
 ## Setup
 
@@ -141,6 +157,18 @@ result = await mcp.call_tool("netcup", "info_domain",
 
 `mcp.reload()` re-reads the settings and closes open connections, which
 picks up config changes without restarting the session.
+
+### Account permissions
+
+The netcup API gates many functions behind a reseller account. On a normal
+customer account, calls like `listall_domains` return
+`4020 Function not available - This function is available for resellers`.
+That is an API answer, not a bug in this server.
+
+DNS tools have a second restriction: a zone can only be read or written when
+the domain uses netcup's own nameservers. A domain delegated elsewhere (for
+example to Cloudflare) returns
+`5029/5031 ... Domain uses external name servers`.
 
 ### One gotcha: environment variables do not cross the boundary
 

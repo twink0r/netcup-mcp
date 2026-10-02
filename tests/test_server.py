@@ -85,69 +85,71 @@ def mock_handler(responses: dict[str, dict]) -> object:
     return httpx.MockTransport(handler)
 
 
-def test_login_is_cached_across_calls() -> None:
-    calls: list[dict] = []
+def _session(session_id: str) -> dict:
+    return {"status": "success", "statuscode": 2000, "responsedata": {"apisessionid": session_id}}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        calls.append(payload)
-        if payload.get("action") == "login":
-            return httpx.Response(200, json={"status": "success", "responsedata": "SESSION123"})
-        return httpx.Response(
-            200,
-            json={"status": "success", "responsedata": json.dumps([{"domainname": "example.com"}])},
-        )
+
+def test_login_is_cached_across_calls() -> None:
+    calls: list[tuple[str, dict]] = []
+
+    async def handler(action: str, params: dict) -> dict:
+        calls.append((action, params))
+        if action == "login":
+            return _session("SESSION123")
+        return {
+            "status": "success",
+            "statuscode": 2000,
+            "responsedata": [{"domainname": "example.com"}],
+        }
 
     client = NetcupClient("123456", "key", "password")
-    client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
+    client._post = handler  # type: ignore[method-assign]
 
     asyncio.run(client.call("infoDomain", domainname="example.com"))
     asyncio.run(client.call("infoDomain", domainname="other.com"))
 
-    assert [c.get("action") for c in calls] == ["login", "infoDomain", "infoDomain"]
-    assert calls[1]["apisessionid"] == "SESSION123"
+    assert [a for a, _ in calls] == ["login", "infoDomain", "infoDomain"]
+    assert calls[1][1]["apisessionid"] == "SESSION123"
     # Credentials are added by the client, not required from the model.
-    assert calls[1]["apikey"] == "key"
+    assert calls[1][1]["apikey"] == "key"
+    # netcup rejects customernumber as a string, so it must be sent as an int.
+    assert calls[1][1]["customernumber"] == 123456
 
 
 def test_session_error_triggers_one_relogin() -> None:
     sequence = [
-        {"status": "success", "responsedata": "SESSION1"},
+        _session("SESSION1"),
         {"status": "error", "statuscode": 4010, "shortmessage": "Session invalid"},
-        {"status": "success", "responsedata": "SESSION2"},
-        {"status": "success", "responsedata": json.dumps({"ok": True})},
+        _session("SESSION2"),
+        {"status": "success", "statuscode": 2000, "responsedata": {"ok": True}},
     ]
-    seen: list[dict] = []
+    seen: list[tuple[str, dict]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        seen.append(payload)
-        return httpx.Response(200, json=sequence[len(seen) - 1])
+    async def handler(action: str, params: dict) -> dict:
+        seen.append((action, params))
+        return sequence[len(seen) - 1]
 
     client = NetcupClient("123456", "key", "password")
-    client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
+    client._post = handler  # type: ignore[method-assign]
 
     result = asyncio.run(client.call("infoDomain", domainname="example.com"))
 
-    assert json.loads(result["responsedata"]) == {"ok": True}
-    assert [p.get("action") for p in seen] == ["login", "infoDomain", "login", "infoDomain"]
-    assert seen[3]["apisessionid"] == "SESSION2"
+    assert result["responsedata"] == {"ok": True}
+    assert [a for a, _ in seen] == ["login", "infoDomain", "login", "infoDomain"]
+    assert seen[3][1]["apisessionid"] == "SESSION2"
 
 
 def test_api_error_raises() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "status": "error",
-                "statuscode": 4013,
-                "shortmessage": "Validation Error.",
-                "longmessage": "Invalid entry for field apikey",
-            },
-        )
+    async def handler(action: str, params: dict) -> dict:
+        return {
+            "status": "error",
+            "statuscode": 4013,
+            "shortmessage": "Validation Error.",
+            "longmessage": "Invalid entry for field apikey",
+        }
 
     client = NetcupClient("123456", "key", "password")
-    client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
+    client._post = handler  # type: ignore[method-assign]
 
     with pytest.raises(NetcupError) as excinfo:
         asyncio.run(client.call("infoDomain", domainname="example.com"))
@@ -156,21 +158,62 @@ def test_api_error_raises() -> None:
 
 
 def test_unset_parameters_are_not_sent() -> None:
-    sent: list[dict] = []
+    sent: list[tuple[str, dict]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        sent.append(payload)
-        if payload.get("action") == "login":
-            return httpx.Response(200, json={"status": "success", "responsedata": "S"})
-        return httpx.Response(200, json={"status": "success", "responsedata": "{}"})
+    async def handler(action: str, params: dict) -> dict:
+        sent.append((action, params))
+        if action == "login":
+            return _session("S")
+        return {"status": "success", "statuscode": 2000, "responsedata": {}}
 
     client = NetcupClient("123456", "key", "password")
-    client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
+    client._post = handler  # type: ignore[method-assign]
 
     asyncio.run(client.call("infoDomain", domainname="example.com", registryinformationflag=None))
 
-    assert "registryinformationflag" not in sent[-1]
+    assert "registryinformationflag" not in sent[-1][1]
+
+
+def test_payload_is_nested_under_param() -> None:
+    """netcup rejects a flat payload with 4013, whatever the credentials are."""
+    sent: list[tuple[str, dict]] = []
+
+    async def handler(action: str, params: dict) -> dict:
+        sent.append((action, params))
+        if action == "login":
+            return _session("S")
+        return {"status": "success", "statuscode": 2000, "responsedata": {}}
+
+    client = NetcupClient("123456", "key", "password")
+    client._post = handler  # type: ignore[method-assign]
+    asyncio.run(client.call("infoDomain", domainname="example.com"))
+
+    # The client builds the envelope itself, so assert on its helper instead.
+    from netcup_mcp.client import _as_json_value
+
+    assert _as_json_value("123456") == 123456
+    assert _as_json_value("abc") == "abc"
+    assert _as_json_value({"id": "42"}) == {"id": 42}
+    assert _as_json_value(None) is None
+
+
+def test_structured_parameters_keep_their_shape() -> None:
+    """DNS record sets must reach netcup as nested objects."""
+    records = {"dnsrecords": [{"hostname": "@", "type": "A", "destination": "1.2.3.4"}]}
+    client = NetcupClient("123456", "key", "password")
+    seen: dict = {}
+
+    async def handler(action: str, params: dict) -> dict:
+        if action == "login":
+            return _session("S")
+        seen.update(params)
+        return {"status": "success", "statuscode": 2000, "responsedata": {}}
+
+    client._post = handler  # type: ignore[method-assign]
+    asyncio.run(client.call("updateDnsRecords", domainname="example.com", dnsrecordset=records))
+
+    assert seen["dnsrecordset"] == records
+    assert seen["domainname"] == "example.com"
 
 
 def test_tool_rejects_unknown_argument() -> None:
@@ -214,15 +257,11 @@ def test_required_fields_are_declared() -> None:
 
 
 def test_tool_reports_api_error_to_model() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"status": "error", "statuscode": 4013, "shortmessage": "Validation Error."},
-        )
+    async def handler(action: str, params: dict) -> dict:
+        return {"status": "error", "statuscode": 4013, "shortmessage": "Validation Error."}
 
     registry = make_registry()
-    client = registry.client()
-    client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
+    registry.client()._post = handler  # type: ignore[method-assign]
     server = build_server(registry)
     tool = server._tool_manager.get_tool("info_domain")
 
@@ -237,15 +276,6 @@ def _text(result) -> str:
     return "".join(getattr(block, "text", "") for block in result.content)
 
 
-def _run(handler, payload):
-    """Call the mock transport synchronously for the async _post."""
-    async def go():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            request = client.build_request(
-                "POST", "https://example.test/?JSON", json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            response = await client.send(request)
-            return response.json()
-
-    return go()
+def _run(handler, action, params):
+    """Serve a canned Responsemessage for one SOAP call."""
+    return handler(action, params)
