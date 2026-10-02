@@ -1,0 +1,21 @@
+# netcup-mcp configuration.
+#
+# Copy to netcup-mcp.toml (searched in the current directory) or to
+# ~/.config/netcup-mcp/config.toml. $NETCUP_MCP_CONFIG overrides both.
+
+# Account used when a tool is called without an `account` argument.
+default_account = "prod"
+
+[accounts.prod]
+description = "Production netcup account"
+# Secrets live in a separate file, commonly 0600 and in a password manager.
+env_file = "~/.config/netcup-mcp/prod.env"
+
+[accounts.staging]
+description = "Staging netcup account"
+# Inline values are fine too. ${VAR} is read from the process environment.
+customernumber = "123456"
+apikey = "${NETCUP_STAGING_APIKEY}"
+apipassword = "${NETCUP_STAGING_APIPASSWORD}"
+# An account may mix both sources; inline values win over env_file.
+# env_file = "~/.config/netcup-mcp/staging.env"

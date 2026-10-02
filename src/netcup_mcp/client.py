@@ -17,6 +17,8 @@ from typing import Any
 
 import httpx
 
+from .config import IMPLICIT_ACCOUNT, Config
+
 ENDPOINT = "https://ccp.netcup.net/run/webservice/servers/endpoint.php"
 JSON_URL = ENDPOINT + "?JSON"
 
@@ -45,9 +47,11 @@ class NetcupClient:
         apikey: str,
         apipassword: str,
         *,
+        name: str = IMPLICIT_ACCOUNT,
         endpoint: str = JSON_URL,
         timeout: float = 30.0,
     ) -> None:
+        self.name = name
         self.customernumber = str(customernumber)
         self.apikey = apikey
         self.apipassword = apipassword
@@ -180,3 +184,64 @@ class NetcupClient:
             return json.loads(raw)
         except json.JSONDecodeError:
             return raw
+
+
+class AccountRegistry:
+    """Holds one lazily-created :class:`NetcupClient` per configured account.
+
+    Each account gets its own client, and therefore its own API session, so
+    switching accounts never reuses the wrong session id.
+    """
+
+    def __init__(self, config: Config, **client_kwargs: Any) -> None:
+        self._config = config
+        self._client_kwargs = client_kwargs
+        self._clients: dict[str, NetcupClient] = {}
+
+    @property
+    def config(self) -> Config:
+        return self._config
+
+    @property
+    def names(self) -> list[str]:
+        return self._config.names
+
+    def client(self, account: str | None = None) -> NetcupClient:
+        """Return the client for an account, creating it on first use.
+
+        Raises ConfigError if the account is not configured.
+        """
+        resolved = self._config.get(account)
+        existing = self._clients.get(resolved.name)
+        if existing is not None:
+            return existing
+
+        client = NetcupClient(
+            resolved.customernumber,
+            resolved.apikey,
+            resolved.apipassword,
+            name=resolved.name,
+            **self._client_kwargs,
+        )
+        self._clients[resolved.name] = client
+        return client
+
+    async def aclose(self) -> None:
+        """Close every client, ending the API sessions."""
+        for client in self._clients.values():
+            await client.aclose()
+        self._clients.clear()
+
+    def describe(self) -> list[dict[str, Any]]:
+        """Summarise the configured accounts, without secrets."""
+        return [
+            {
+                "name": account.name,
+                "default": account.name == self._config.default_account,
+                "description": account.description,
+                "customernumber": account.customernumber,
+            }
+            for account in (
+                self._config.accounts[name] for name in self._config.names
+            )
+        ]

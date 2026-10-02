@@ -3,3 +3,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
+.env.*
+!.env.example
+
+# Local config may point at real credentials.
+netcup-mcp.toml
+netcup-mcp.config.toml
+*.env

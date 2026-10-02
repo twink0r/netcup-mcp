@@ -11,15 +11,31 @@ import json
 import httpx
 import pytest
 
-from netcup_mcp.client import NetcupClient, NetcupError
+from netcup_mcp.client import AccountRegistry, NetcupClient, NetcupError
+from netcup_mcp.config import Account, Config, IMPLICIT_ACCOUNT
 from netcup_mcp.server import build_server
 from netcup_mcp.tool_specs import TOOL_NAMES, TOOL_SPECS
 
 HIDDEN_PARAMS = {"customernumber", "apikey", "apipassword", "apisessionid"}
 
 
-def make_client(handler) -> NetcupClient:
-    return NetcupClient("123456", "key", "password", endpoint="https://example.test/?JSON")
+def make_config(names: tuple[str, ...] = ("default",)) -> Config:
+    return Config(
+        accounts={
+            name: Account(name=name, customernumber=f"1000{index}",
+                          apikey="key", apipassword="password")
+            for index, name in enumerate(names)
+        },
+        default_account=names[0],
+    )
+
+
+def make_registry(names: tuple[str, ...] = ("default",), **kwargs) -> AccountRegistry:
+    return AccountRegistry(make_config(names), **kwargs)
+
+
+def make_client(**kwargs) -> NetcupClient:
+    return NetcupClient("123456", "key", "password", **kwargs)
 
 
 def test_tool_names_are_snake_case() -> None:
@@ -44,13 +60,13 @@ def test_every_spec_field_is_documented() -> None:
 
 
 def test_server_registers_all_tools() -> None:
-    server = build_server(make_client(lambda r: None))
+    server = build_server(make_registry())
     tools = asyncio.run(server.list_tools())
-    assert {t.name for t in tools} == set(TOOL_NAMES.values())
+    assert {t.name for t in tools} == set(TOOL_NAMES.values()) | {"list_accounts"}
 
 
 def test_server_serves_documented_schema() -> None:
-    server = build_server(make_client(lambda r: None))
+    server = build_server(make_registry())
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
     # The DNS record tool must expose the nested record shape, not a bare string.
     schema = tools["update_dns_records"].input_schema
@@ -161,9 +177,10 @@ def test_tool_rejects_unknown_argument() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "success", "responsedata": "{}"})
 
-    client = make_client(lambda r: None)
+    registry = make_registry()
+    client = registry.client()
     client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
-    server = build_server(client)
+    server = build_server(registry)
     tool = server._tool_manager.get_tool("info_domain")
 
     # Undeclared arguments are rejected rather than silently dropped.
@@ -173,7 +190,7 @@ def test_tool_rejects_unknown_argument() -> None:
 
 def test_each_tool_validates_against_its_own_schema() -> None:
     """Regression: handlers must not share the last-registered tool's schema."""
-    server = build_server(make_client(lambda r: None))
+    server = build_server(make_registry())
 
     # listall_domains takes no arguments; domainname belongs to other tools.
     with pytest.raises(Exception):
@@ -183,7 +200,7 @@ def test_each_tool_validates_against_its_own_schema() -> None:
 
 
 def test_required_arguments_are_enforced() -> None:
-    server = build_server(make_client(lambda r: None))
+    server = build_server(make_registry())
     tool = server._tool_manager.get_tool("info_domain")
     with pytest.raises(Exception):
         asyncio.run(tool.run({}, context=None))
@@ -203,9 +220,10 @@ def test_tool_reports_api_error_to_model() -> None:
             json={"status": "error", "statuscode": 4013, "shortmessage": "Validation Error."},
         )
 
-    client = make_client(lambda r: None)
+    registry = make_registry()
+    client = registry.client()
     client._post = lambda payload: _run(handler, payload)  # type: ignore[method-assign]
-    server = build_server(client)
+    server = build_server(registry)
     tool = server._tool_manager.get_tool("info_domain")
 
     result = asyncio.run(tool.run({"domainname": "example.com"}, context=None))
