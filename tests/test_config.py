@@ -214,9 +214,36 @@ def test_no_config_and_no_credentials_fails(monkeypatch, tmp_path) -> None:
         load_config()
 
 
-def test_explicit_missing_config_is_an_error(tmp_path) -> None:
+def test_explicit_missing_config_falls_back(tmp_path, monkeypatch) -> None:
+    """A client naming a not-yet-created config must not stop the server."""
+    monkeypatch.chdir(tmp_path)
+    for name in ("NETCUP_CUSTOMERNUMBER", "NETCUP_APIKEY", "NETCUP_APIPASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+
+    # No credentials anywhere either, so this is still an error, but it names
+    # the missing credentials rather than only the missing file.
+    with pytest.raises(ConfigError, match="Missing credentials"):
+        load_config(tmp_path / "absent.toml")
+
+
+def test_explicit_missing_config_is_an_error_when_required(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NETCUP_MCP_CONFIG_REQUIRED", "1")
+    monkeypatch.setenv("NETCUP_CUSTOMERNUMBER", "1")
+    monkeypatch.setenv("NETCUP_APIKEY", "k")
+    monkeypatch.setenv("NETCUP_APIPASSWORD", "p")
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "absent.toml")
+
+
+def test_explicit_missing_config_falls_back_to_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NETCUP_CUSTOMERNUMBER", "777")
+    monkeypatch.setenv("NETCUP_APIKEY", "k")
+    monkeypatch.setenv("NETCUP_APIPASSWORD", "p")
+    monkeypatch.chdir(tmp_path)
+
+    config = load_config(tmp_path / "absent.toml")
+
+    assert config.get().customernumber == "777"
 
 
 # --- routing ---

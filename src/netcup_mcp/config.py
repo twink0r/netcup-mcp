@@ -29,6 +29,7 @@ dependency.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import tomllib
@@ -38,6 +39,8 @@ from pathlib import Path
 CONFIG_FILENAMES = ("netcup-mcp.toml", "netcup-mcp.config.toml")
 CONFIG_ENV_VAR = "NETCUP_MCP_CONFIG"
 DEFAULT_ACCOUNT_ENV_VAR = "NETCUP_MCP_ACCOUNT"
+#: Set to make a missing --config file a hard error instead of a fallback.
+NETCUP_CONFIG_REQUIRED = "NETCUP_MCP_CONFIG_REQUIRED"
 
 #: Name of the account synthesised when no config file exists.
 IMPLICIT_ACCOUNT = "default"
@@ -45,6 +48,9 @@ IMPLICIT_ACCOUNT = "default"
 CREDENTIAL_FIELDS = ("customernumber", "apikey", "apipassword")
 
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigError(RuntimeError):
@@ -257,20 +263,33 @@ def load_config(
     """Load the configuration.
 
     Args:
-        path: explicit config file. Missing files are an error.
+        path: explicit config file. When the file does not exist we fall back
+            to discovery and then to the environment, rather than failing: a
+            config named by an MCP client that has not been created yet should
+            not stop the server from starting.
         start: directory to search for a config file when ``path`` is None.
     """
+    config_path: Path | None = None
     if path is not None:
-        config_path = Path(path).expanduser()
-        if not config_path.is_file():
-            raise ConfigError(f"config file not found: {config_path}")
-    else:
-        config_path = find_config(start)
-        if config_path is None:
-            return Config(
-                accounts={IMPLICIT_ACCOUNT: _implicit_account()},
-                default_account=IMPLICIT_ACCOUNT,
+        candidate = Path(path).expanduser()
+        if candidate.is_file():
+            config_path = candidate
+        elif os.environ.get(NETCUP_CONFIG_REQUIRED):
+            raise ConfigError(f"config file not found: {candidate}")
+        else:
+            logger.warning(
+                "No config file at %s; falling back to discovery, then to the "
+                "NETCUP_* environment variables.",
+                candidate,
             )
+
+    if config_path is None:
+        config_path = find_config(start)
+    if config_path is None:
+        return Config(
+            accounts={IMPLICIT_ACCOUNT: _implicit_account()},
+            default_account=IMPLICIT_ACCOUNT,
+        )
 
     try:
         raw = tomllib.loads(config_path.read_text(encoding="utf-8"))

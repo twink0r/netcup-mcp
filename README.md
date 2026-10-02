@@ -114,6 +114,46 @@ The server speaks MCP over stdio.
 }
 ```
 
+## Prime Agent
+
+The server is registered as a stdio MCP server in Prime Agent:
+
+```sh
+prime-agent mcp add netcup --cwd /Users/akarl/Projects/netcup-mcp -- \
+  uv run netcup-mcp --config /Users/akarl/Projects/netcup-mcp/netcup-mcp.toml
+```
+
+That writes an `mcpServers.netcup` entry to `~/.prime/agent/settings.json`.
+Remove it again with `prime-agent mcp remove netcup`.
+
+Call the tools from the agent's Python kernel through the pre-imported
+`mcp` module. Note that inside Prime Agent the name `mcp` is already the
+MCP **SDK**; the Prime Agent service module is `rlm.mcp`:
+
+```python
+from rlm import mcp
+
+tools = await mcp.list_tools("netcup")
+result = await mcp.call_tool("netcup", "list_accounts", {})
+result = await mcp.call_tool("netcup", "info_domain",
+                             {"domainname": "example.com", "account": "prod"})
+```
+
+`mcp.reload()` re-reads the settings and closes open connections, which
+picks up config changes without restarting the session.
+
+### One gotcha: environment variables do not cross the boundary
+
+Prime Agent passes a stdio child only `HOME`, `PATH`, `TMPDIR`, `TEMP`, `TMP`
+and any explicit `env` references. **`NETCUP_CUSTOMERNUMBER`,
+`NETCUP_APIKEY` and `NETCUP_APIPASSWORD` are not passed through**, so the
+environment fallback does not work when the server runs under Prime Agent.
+Give each account an `env_file` (or inline values) instead.
+
+A missing `--config` file is only a warning: the server falls back to config
+discovery and then to the environment. Set `NETCUP_MCP_CONFIG_REQUIRED=1` to
+make it a hard error.
+
 ## Tools
 
 Read-only:
