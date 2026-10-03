@@ -10,3 +10,6 @@ __pycache__/
 netcup-mcp.toml
 netcup-mcp.config.toml
 *.env
+dist/
+build/
+*.egg-info/

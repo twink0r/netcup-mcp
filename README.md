@@ -1,13 +1,76 @@
 # netcup-mcp
 
-A small MCP server for the [netcup CCP domain webservice](https://ccp.netcup.net/run/webservice/servers/endpoint.php).
-It turns the netcup domain API into MCP tools so an agent can list domains,
-inspect and edit DNS zones, and manage contact handles. Multiple netcup
+An [MCP](https://modelcontextprotocol.io) server for the [netcup CCP domain
+webservice](https://ccp.netcup.net/run/webservice/servers/endpoint.php).
+It exposes the netcup domain API as tools, so an agent can list domains,
+read and edit DNS zones, and manage contact handles. Multiple netcup
 accounts are supported through a config file.
 
-The API is SOAP, but the same endpoint answers JSON when called with `?JSON`,
-so the server needs no XML stack. Two runtime dependencies:
-[`mcp`](https://pypi.org/project/mcp/) and `httpx`.
+Built with Python and [uv](https://docs.astral.sh/uv/). Two runtime
+dependencies: [`mcp`](https://pypi.org/project/mcp/) and `httpx`.
+
+## Quick start
+
+```sh
+git clone https://github.com/twink0r/netcup-mcp
+cd netcup-mcp
+uv sync
+```
+
+Grab your customer number, API key and API password from the netcup CCP
+under **API / Webservice**, then put them in a config file:
+
+```sh
+mkdir -p ~/.config/netcup-mcp
+cp netcup-mcp.example.toml netcup-mcp.toml
+
+cat > ~/.config/netcup-mcp/default.env <<'EOF'
+NETCUP_CUSTOMERNUMBER=123456
+NETCUP_APIKEY=your-api-key
+NETCUP_APIPASSWORD=your-api-password
+EOF
+
+chmod 600 ~/.config/netcup-mcp/default.env
+```
+
+Edit `netcup-mcp.toml` so it points at that file:
+
+```toml
+default_account = "default"
+
+[accounts.default]
+description = "My netcup account"
+env_file = "~/.config/netcup-mcp/default.env"
+```
+
+Check it resolves, without starting a server:
+
+```sh
+uv run netcup-mcp --list-accounts
+```
+
+Then point your MCP client at it (see [Prime Agent](#prime-agent) or the
+[other clients](#other-mcp-clients) section).
+
+### Without a config file
+
+For a single account you can skip the config file entirely and use
+environment variables:
+
+```sh
+export NETCUP_CUSTOMERNUMBER=123456
+export NETCUP_APIKEY=your-api-key
+export NETCUP_APIPASSWORD=your-api-password
+uv run netcup-mcp
+```
+
+Note that some MCP hosts do not pass arbitrary environment variables to a
+server process. If yours does not, use a config file.
+
+## What it does
+
+The webservice is SOAP, but the same endpoint answers JSON when called with
+`?JSON`, so this server needs no XML stack.
 
 ### The JSON API is fussy — three things that will bite you
 
@@ -24,23 +87,6 @@ confusing ways:
    optional. Without it netcup returns HTTP 500.
 
 The client handles all three; a tool call never has to care.
-
-## Setup
-
-```sh
-uv sync
-```
-
-You need three values from the netcup CCP, under **API / Webservice**:
-
-| Variable | Meaning |
-| --- | --- |
-| `NETCUP_CUSTOMERNUMBER` | Your customer number |
-| `NETCUP_APIKEY` | API key from the CCP |
-| `NETCUP_APIPASSWORD` | API password from the CCP |
-
-Those three variables are enough for a single account. For several accounts,
-use a config file instead.
 
 ## Configuration
 
@@ -116,15 +162,26 @@ uv run netcup-mcp
 
 The server speaks MCP over stdio.
 
-## MCP client config
+## Other MCP clients
+
+The server speaks stdio, so any MCP client works. Examples:
+
+**Claude Code**
+
+```sh
+claude mcp add netcup -- uv --directory /path/to/netcup-mcp run netcup-mcp \
+  --config /path/to/netcup-mcp/netcup-mcp.toml
+```
+
+**Generic JSON client config**
 
 ```json
 {
   "mcpServers": {
     "netcup": {
       "command": "uv",
-      "args": ["--directory", "/Users/akarl/Projects/netcup-mcp", "run", "netcup-mcp", "--config", "/Users/akarl/Projects/netcup-mcp/netcup-mcp.toml"],
-      "env": {}
+      "args": ["--directory", "/path/to/netcup-mcp", "run", "netcup-mcp",
+               "--config", "/path/to/netcup-mcp/netcup-mcp.toml"]
     }
   }
 }
@@ -210,12 +267,16 @@ with `info_dns_records` first and pass back everything you want to keep.
 Use `{"hostname": "@"}` for the zone apex, and set `deleterecord` to drop a
 record.
 
-## Tests
+## Testing
 
 ```sh
 uv run pytest            # unit tests, no network
-uv run pytest -m live    # hits the real API, needs credentials in .env
+uv run pytest -m live    # hits the real API, needs credentials
 ```
+
+The live tests skip automatically unless credentials are available, either
+from the environment or from a config file (`NETCUP_CONFIG`, or
+`netcup-mcp.toml` in the repo).
 
 ## Notes
 

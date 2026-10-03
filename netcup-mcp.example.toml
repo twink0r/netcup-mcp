@@ -1,21 +1,29 @@
 # netcup-mcp configuration.
 #
-# Copy to netcup-mcp.toml (searched in the current directory) or to
-# ~/.config/netcup-mcp/config.toml. $NETCUP_MCP_CONFIG overrides both.
+# Copy to netcup-mcp.toml. The server looks for it at:
+#   1. the path given to --config
+#   2. $NETCUP_MCP_CONFIG
+#   3. ./netcup-mcp.toml
+#   4. $XDG_CONFIG_HOME/netcup-mcp/config.toml (or ~/.config/...)
+#
+# netcup-mcp.toml and *.env are gitignored; this example file is not.
 
 # Account used when a tool is called without an `account` argument.
-default_account = "prod"
+default_account = "default"
 
-[accounts.prod]
-description = "Production netcup account"
-# Secrets live in a separate file, commonly 0600 and in a password manager.
-env_file = "~/.config/netcup-mcp/prod.env"
+[accounts.default]
+description = "My netcup account"
+env_file = "~/.config/netcup-mcp/default.env"
 
-[accounts.staging]
-description = "Staging netcup account"
-# Inline values are fine too. ${VAR} is read from the process environment.
-customernumber = "123456"
-apikey = "${NETCUP_STAGING_APIKEY}"
-apipassword = "${NETCUP_STAGING_APIPASSWORD}"
-# An account may mix both sources; inline values win over env_file.
-# env_file = "~/.config/netcup-mcp/staging.env"
+# Several accounts are fine. Every tool takes an optional `account`
+# argument; omit it to use the default above.
+#
+# [accounts.production]
+# description = "Production"
+# env_file = "~/.config/netcup-mcp/production.env"
+#
+# [accounts.staging]
+# description = "Staging"
+# customernumber = "123456"
+# apikey = "${NETCUP_STAGING_APIKEY}"   # read from the process environment
+# apipassword = "${NETCUP_STAGING_APIPASSWORD}"
