@@ -67,12 +67,12 @@ uv run netcup-mcp
 Note that some MCP hosts do not pass arbitrary environment variables to a
 server process. If yours does not, use a config file.
 
-## What it does
+## Notes on the netcup API
 
 The webservice is SOAP, but the same endpoint answers JSON when called with
 `?JSON`, so this server needs no XML stack.
 
-### The JSON API is fussy — three things that will bite you
+### Three undocumented requirements that will bite you
 
 All three were found by testing against the live API, and all three fail in
 confusing ways:
@@ -87,6 +87,20 @@ confusing ways:
    optional. Without it netcup returns HTTP 500.
 
 The client handles all three; a tool call never has to care.
+
+## Tools
+
+Read-only: `list_accounts`, `listall_domains`, `listall_handle`,
+`info_domain`, `info_handle`, `info_dns_zone`, `info_dns_records`,
+`price_topleveldomain`, `poll`, `get_authcode_domain`.
+
+Write: `update_dns_records`, `update_dns_zone`, `update_domain`,
+`create_handle`, `update_handle`, `delete_handle`, `change_owner_domain`,
+`cancel_domain`, `transfer_domain`, `create_domain`.
+
+`login` and `logout` are handled by the server itself: it opens a session on
+first use, caches it per account, and re-authenticates once if the session
+expires. Credentials never reach the model.
 
 ## Configuration
 
@@ -238,27 +252,6 @@ Give each account an `env_file` (or inline values) instead.
 A missing `--config` file is only a warning: the server falls back to config
 discovery and then to the environment. Set `NETCUP_MCP_CONFIG_REQUIRED=1` to
 make it a hard error.
-
-## Tools
-
-Read-only:
-
-- `listall_domains`, `listall_handle`
-- `info_domain`, `info_handle`, `info_dns_zone`, `info_dns_records`
-- `price_topleveldomain`, `poll`, `get_authcode_domain`
-
-Write:
-
-- `update_dns_records`, `update_dns_zone`, `update_domain`
-- `create_handle`, `update_handle`, `delete_handle`
-- `change_owner_domain`, `cancel_domain`, `transfer_domain`, `create_domain`
-
-Plus `list_accounts`, which shows the configured account names and which one
-is the default.
-
-`login` and `logout` are handled by the server itself. It opens a session on
-first use, caches it per account, and re-authenticates once if the session
-expires, so credentials never reach the model.
 
 ## Editing DNS records
 
