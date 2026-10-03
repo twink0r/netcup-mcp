@@ -192,8 +192,8 @@ claude mcp add netcup -- uv --directory /path/to/netcup-mcp run netcup-mcp \
 The server is registered as a stdio MCP server in Prime Agent:
 
 ```sh
-prime-agent mcp add netcup --cwd /Users/akarl/Projects/netcup-mcp -- \
-  uv run netcup-mcp --config /Users/akarl/Projects/netcup-mcp/netcup-mcp.toml
+prime-agent mcp add netcup --cwd /path/to/netcup-mcp -- \
+  uv run netcup-mcp --config /path/to/netcup-mcp/netcup-mcp.toml
 ```
 
 That writes an `mcpServers.netcup` entry to `~/.prime/agent/settings.json`.
