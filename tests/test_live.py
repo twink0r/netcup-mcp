@@ -18,18 +18,21 @@ pytestmark = pytest.mark.live
 
 CREDENTIALS = ("NETCUP_CUSTOMERNUMBER", "NETCUP_APIKEY", "NETCUP_APIPASSWORD")
 
-# Config file to use when credentials live in env_files rather than the environment.
-CONFIG_PATH = os.environ.get(
-    "NETCUP_CONFIG",
-    os.path.expanduser("~/.config/netcup-mcp/netcup-mcp.toml"),
-)
+# Where credentials live. Credentials in env_files need a config file, so use
+# the same discovery the server itself uses rather than a fixed path.
+def _find_config() -> str | None:
+    from netcup_mcp.config import find_config
 
-project_config = "/Users/akarl/Projects/netcup-mcp/netcup-mcp.toml"
-if os.path.isfile(project_config):
-    CONFIG_PATH = os.environ.get("NETCUP_CONFIG", project_config)
+    try:
+        found = find_config()
+    except Exception:
+        return None
+    return str(found) if found else None
 
+
+CONFIG_PATH = _find_config()
 HAVE_ENV = all(os.environ.get(name) for name in CREDENTIALS)
-HAVE_CONFIG = os.path.isfile(CONFIG_PATH)
+HAVE_CONFIG = bool(CONFIG_PATH and os.path.isfile(CONFIG_PATH))
 
 
 def _client(account: str | None = None) -> NetcupClient:
